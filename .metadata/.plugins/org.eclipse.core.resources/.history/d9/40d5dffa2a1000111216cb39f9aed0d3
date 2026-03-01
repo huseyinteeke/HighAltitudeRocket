@@ -1,0 +1,255 @@
+/*
+ * bme280.c
+ *
+ *  Created on: Feb 20, 2026
+ *      Author: husey
+ */
+
+
+
+#include "BME280.h"
+
+
+typedef struct {
+  uint16_t dig_T1;
+  int16_t dig_T2;
+  int16_t dig_T3;
+  uint16_t dig_P1;
+  int16_t dig_P2;
+  int16_t dig_P3;
+  int16_t dig_P4;
+  int16_t dig_P5;
+  int16_t dig_P6;
+  int16_t dig_P7;
+  int16_t dig_P8;
+  int16_t dig_P9;
+
+  uint8_t dig_H1;
+  int16_t dig_H2;
+  uint8_t dig_H3;
+  int16_t dig_H4;
+  int16_t dig_H5;
+  int8_t dig_H6;
+} BME_CalibData_t;
+
+static BME_CalibData_t calibration;
+
+
+
+
+
+/*
+ * REGISTER = CONFIG
+ * Bit 7 ,6 , 5 [2:0] Standby Duration
+ */
+typedef enum{
+  mszeropointfive     = 0b000,
+  mssixtytwopointfive    = 0b001,
+  mszhundredtwentyfive  = 0b010,
+  msfivehundred     = 0b011,
+  msthousand        = 0b101,
+  sten          = 0b110,
+  stwenty         = 0b111
+}BME_Standby_duration;
+
+/*
+ * Will be written bit 1 , 0 [1:0] for mode
+ * Register = CTRL_MEAS
+ */
+typedef enum{
+  SLEEP   = 0b00,
+  FORCED  = 0b01,
+  NORMAL  = 0b11
+}BME_SensorMod;
+
+
+static BME_Standby_duration standby = mssixtytwopointfive;
+static BME_SensorMod        mode    = NORMAL;
+
+
+static inline BMEStatus_Typedef_t BME_WriteReg(BME_Init_Typedef_t* dev , uint8_t reg , uint8_t data)
+{
+	uint8_t tx_buffer[2];
+
+	tx_buffer[0] = reg & 0x7F;
+	tx_buffer[1] = data;
+
+	HAL_GPIO_WritePin(CSPORT, CSPIN , GPIO_PIN_RESET);
+	if(HAL_SPI_Transmit_DMA(dev->spihandler, tx_buffer, 2) == HAL_ERROR) return BME_SPI_ERROR;
+	HAL_GPIO_WritePin(CSPORT,CSPIN , GPIO_PIN_SET);
+	return BME_SPI_OK;
+}
+
+
+static inline BMEStatus_Typedef_t BME_ReadReg(BME_Init_Typedef_t* dev , uint8_t reg , uint8_t size , uint8_t* data)
+{
+
+	HAL_GPIO_WritePin(CSPORT, CSPIN , GPIO_PIN_RESET);
+	uint8_t tx = reg | 0x80;  // read bit set
+	if(HAL_SPI_Transmit_DMA(dev->spihandler, &tx, 1) == HAL_ERROR) return  BME_SPI_ERROR;
+	if(HAL_SPI_Receive_DMA(dev->spihandler, data, size) == HAL_ERROR) return BME_SPI_ERROR;
+	HAL_GPIO_WritePin(CSPORT,CSPIN , GPIO_PIN_SET);
+
+	return BME_SPI_OK;
+
+}
+
+
+BMEStatus_Typedef_t InitBME_SPI(BME_Init_Typedef_t* dev)
+{
+	if(BME_WriteReg(dev, BME_RESET_REG , BME_RESET_VALUE) == BME_SPI_ERROR) return BME_SPI_ERROR;
+	dev->BME_Delay(10);
+	uint8_t meas_data;
+	if(BME_WriteReg(dev, BME_CTRL_HUM_REG , dev->hum_osr) == BME_SPI_ERROR) return BME_SPI_ERROR;
+	meas_data = (standby << 5)|(dev->coefficient << 2) | (0b00);
+	if(BME_WriteReg(dev, BME_CNFG_REG , meas_data) == BME_SPI_ERROR) return BME_SPI_ERROR;
+	meas_data = (dev->tmp_osr << 5)|(dev->press_osr << 2) | mode;
+	if(BME_WriteReg(dev ,BME_CTRL_MEAS_REG, meas_data) == BME_SPI_ERROR) return BME_SPI_ERROR;
+	if(BME_ReadCalibData(dev) == BME_CALIB_ERROR) return BME_CALIB_ERROR;
+	return BME_SPI_OK;
+
+}
+
+
+BMEStatus_Typedef_t BME_ReadCalibData(BME_Init_Typedef_t* dev)
+{
+	uint8_t calib[26];
+	if(BME_ReadReg(dev, BME_CALIB_00_25_BASE, 26, calib) == BME_SPI_ERROR) return BME_CALIB_ERROR;
+
+	calibration.dig_T1 = (calib[1] << 8) | calib[0];
+	calibration.dig_T2 = (calib[3] << 8) | calib[2];
+	calibration.dig_T3 = (calib[5] << 8) | calib[4];
+
+	calibration.dig_P1 = (calib[7] << 8) | calib[6];
+	calibration.dig_P2 = (calib[9] << 8) | calib[8];
+	calibration.dig_P3 = (calib[11] << 8) | calib[10];
+	calibration.dig_P4 = (calib[13] << 8) | calib[12];
+	calibration.dig_P5 = (calib[15] << 8) | calib[14];
+	calibration.dig_P6 = (calib[17] << 8) | calib[16];
+	calibration.dig_P7 = (calib[19] << 8) | calib[18];
+	calibration.dig_P8 = (calib[21] << 8) | calib[20];
+	calibration.dig_P9 = (calib[23] << 8) | calib[22];
+
+	calibration.dig_H1 = calib[25];
+
+	BME_ReadReg(dev, BME_CALIB_26_41_BASE , 8 , calib);
+
+	calibration.dig_H2 = (calib[1] << 8) | calib[0];
+	calibration.dig_H3 = calib[2];
+	calibration.dig_H4 = (calib[3] << 4) | (calib[4] & 0x0F);
+	calibration.dig_H5 = (calib[5] << 4) | (calib[4] >> 4);
+	calibration.dig_H6 = (int8_t) calib[6];
+
+	return BME_CALIB_OK;
+
+}
+
+int32_t t_fine;
+
+BME_Data_t BME_DataRead(BME_Init_Typedef_t* dev)
+{
+    BME_Data_t out_data;
+    uint8_t data[8];
+    int32_t raw_P, raw_T, raw_H;
+    BME_ReadReg(dev, BME_PRESS_MSB, 8, data);
+
+    raw_P = ((uint32_t)data[0] << 12) | ((uint32_t)data[1] << 4) | ((data[2] >> 4) & 0x0F);
+    raw_T = ((uint32_t)data[3] << 12) | ((uint32_t)data[4] << 4) | ((data[5] >> 4) & 0x0F);
+    raw_H = ((uint32_t)data[6] << 8)  | data[7];
+
+    // ------------------------------------------------------------------
+    // TEMP
+    // ------------------------------------------------------------------
+    int32_t var1_T, var2_T, T;
+
+    var1_T = ((((raw_T >> 3) - ((int32_t)calibration.dig_T1 << 1))) * ((int32_t)calibration.dig_T2)) >> 11;
+    var2_T = (((((raw_T >> 4) - ((int32_t)calibration.dig_T1)) * ((raw_T >> 4) - ((int32_t)calibration.dig_T1))) >> 12) * ((int32_t)calibration.dig_T3)) >> 14;
+    t_fine = var1_T + var2_T;
+    T = (t_fine * 5 + 128) >> 8;
+    out_data.temperature = T / 100.0f;
+
+    // ------------------------------------------------------------------
+    // PRESSURE
+    // ------------------------------------------------------------------
+    int64_t var1_P, var2_P, P;
+
+    var1_P = ((int64_t) t_fine) - 128000;
+    var2_P = var1_P * var1_P * (int64_t) calibration.dig_P6;
+    var2_P = var2_P + ((var1_P * (int64_t) calibration.dig_P5) << 17);
+    var2_P = var2_P + (((int64_t) calibration.dig_P4) << 35);
+    var1_P = ((var1_P * var1_P * (int64_t) calibration.dig_P3) >> 8) + ((var1_P * (int64_t) calibration.dig_P2) << 12);
+    var1_P = (((((int64_t) 1) << 47) + var1_P)) * ((int64_t) calibration.dig_P1) >> 33;
+
+    if (var1_P == 0) {
+        out_data.pressure = 0;
+    } else {
+        P = 1048576 - raw_P;
+        P = (((P << 31) - var2_P) * 3125) / var1_P;
+        var1_P = (((int64_t) calibration.dig_P9) * (P >> 13) * (P >> 13)) >> 25;
+        var2_P = (((int64_t) calibration.dig_P8) * P) >> 19;
+        P = ((P + var1_P + var2_P) >> 8) + (((int64_t) calibration.dig_P7) << 4);
+        out_data.pressure = (uint32_t) P / 25600.0f; // hPa
+    }
+
+    // ------------------------------------------------------------------
+    // Humidity
+    // ------------------------------------------------------------------
+    int32_t v_x1_u32r;
+    v_x1_u32r = (t_fine - ((int32_t) 76800));
+    v_x1_u32r = (((((raw_H << 14) - (((int32_t) calibration.dig_H4) << 20)
+            - (((int32_t) calibration.dig_H5) * v_x1_u32r)) + ((int32_t) 16384))
+            >> 15)
+            * (((((((v_x1_u32r * ((int32_t) calibration.dig_H6)) >> 10)
+                    * (((v_x1_u32r * ((int32_t) calibration.dig_H3)) >> 11)
+                            + ((int32_t) 32768))) >> 10) + ((int32_t) 2097152))
+                    * ((int32_t) calibration.dig_H2) + 8192) >> 14));
+    v_x1_u32r = (v_x1_u32r
+            - (((((v_x1_u32r >> 15) * (v_x1_u32r >> 15)) >> 7)
+                    * ((int32_t) calibration.dig_H1)) >> 4));
+    v_x1_u32r = (v_x1_u32r < 0 ? 0 : v_x1_u32r);
+    v_x1_u32r = (v_x1_u32r > 419430400 ? 419430400 : v_x1_u32r);
+
+    out_data.humidity = (uint32_t) (v_x1_u32r >> 12) / 1024.0f;
+    return out_data;
+}
+
+
+
+
+
+
+inline float          PressureToHeight(float pressure){
+
+  const float P0 = 1013.25; // Deniz seviyesi basıncı (hPa)
+  float height;
+
+  height = 44330.0 * (1.0 - pow((pressure / P0), 0.1902949));
+
+  return height;
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

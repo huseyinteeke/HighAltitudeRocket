@@ -1,0 +1,94 @@
+/*
+ * RS232.c
+ *
+ *  Created on: Feb 22, 2026
+ *      Author: husey
+ */
+#include "tasks.h"
+
+
+const uint8_t commstarted = 0xAA;
+const uint8_t sitheader   = 0xAB;
+const uint8_t sitfooter1     = 0x0B;
+const uint8_t sitfooter2     = 0x0A;
+const uint8_t SUTstatus = {
+    .header   = commstarted,
+    .data1    = 0x00,   //To be updated
+    .data2    = 0x00,
+    .checksum = 0x1A,
+    .footer1  = 0x0D,
+    .footer2  = 0x0A
+};
+
+
+SitSut_DataHeader_t SitSutStop =
+{
+    .header   = commstarted,
+    .command  = 0x24,
+    .checksum = 0x90,
+    .footer1  = 0x0D,
+    .footer2  = 0x0A
+};
+
+
+const SitSut_DataHeader_t SutStart =
+{
+   .header   = commstarted,
+   .command  = 0x22,
+   .checksum = 0x8E,
+   .footer1  = 0x0D,
+   .footer2  = 0x0A
+};
+
+
+const SitSut_DataHeader_t SitStart =
+{
+    .header   = commstarted,
+    .command  = 0x20,
+    .checksum = 0x8C,
+    .footer1  = 0x0D,
+    .footer2  = 0x0A
+};
+
+
+
+
+uint8_t compareStartStop(SitSut_DataHeader_t* startstop)
+{
+    if(startstop->header != commstarted) return 0;
+    short SutFlag = startstop->command == SutStart.command && startstop->checksum == SutStart.checksum && startstop->footer1 == SutStart.footer1 && startstop->footer2 == SutStart.footer2;
+    if(SutFlag) return SUTACTIVECODE;
+    short SitFlag = startstop->command == SitStart.command && startstop->checksum == SitStart.checksum && startstop->footer1 == SitStart.footer1 && startstop->footer2 == SitStart.footer2;
+    if(SitFlag)  return SITACTIVECODE;
+    short StopFlag = startstop->command == SitSutStop.command && startstop->checksum == SitSutStop.checksum && startstop->footer1 == SitSutStop.footer1 && startstop->footer2 == SitSutStop.footer2;
+    if(StopFlag) return STOPSITSUT;
+    return 0;
+}
+
+uint8_t calculateChecksum(uint32_t sum)
+{
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

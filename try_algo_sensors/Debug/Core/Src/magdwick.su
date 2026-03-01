@@ -1,0 +1,2 @@
+../Core/Src/magdwick.c:17:6:MadgwichAHRSUpdateIMU	120	static
+../Core/Src/magdwick.c:95:6:QuaternionToEuler	32	static

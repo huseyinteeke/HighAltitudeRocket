@@ -1,0 +1,10 @@
+15:50:37 **** Incremental Build of configuration Debug for project BMI_Fusion ****
+make -j20 all 
+arm-none-eabi-size  BMI_Fusion.elf 
+   text	   data	    bss	    dec	    hex	filename
+   6464	     12	   1572	   8048	   1f70	BMI_Fusion.elf
+Finished building: default.size.stdout
+ 
+
+15:50:37 Build Finished. 0 errors, 0 warnings. (took 191ms)
+

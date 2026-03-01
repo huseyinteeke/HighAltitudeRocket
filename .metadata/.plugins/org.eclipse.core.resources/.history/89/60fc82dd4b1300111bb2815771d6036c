@@ -1,0 +1,38 @@
+#include "FreeRTOS.h"
+#include "task.h"
+#include "SEGGER.h"
+#include "semphr.h"
+#include "main.h"
+#include "BME280.h"
+#include "algorithms_drivers/SIT_SUT/SIT_SUT.h"
+
+
+extern SPI_HandleTypeDef hspi2;
+
+
+
+
+
+
+#define DEBUGGINGWITHSEGGER      1
+
+
+
+#define PRESSURE_BME_STACK        512
+#define PRESSURE_BME_PRIORITY     tskIDLE_PRIORITY + 2
+
+#define SITSUT_STACK              512
+#define SITSUT_PRIORITY           tskIDLE_PRIORITY + 2
+
+
+void TasksInitScheduler();
+
+
+
+/*
+ * DMA CallBacks for tasks
+ */
+void BME_DMA_Rx_CallBack();
+void BME_DMA_Tx_CallBack();
+void BME_DMA_ErrorCallBack();
+

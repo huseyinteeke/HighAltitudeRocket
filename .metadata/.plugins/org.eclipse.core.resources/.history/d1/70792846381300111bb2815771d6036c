@@ -1,0 +1,96 @@
+/*
+ * RS232.h
+ *
+ *  Created on: Feb 22, 2026
+ *      Author: husey
+ */
+
+#ifndef SIT_SUT_SIT_SUT_H_
+#define SIT_SUT_SIT_SUT_H_
+
+
+#include "stm32f407xx.h"
+
+/**
+ * We are sending
+ */
+const uint8_t SITHEADER   = 0xAB;
+const uint8_t SITFOOTER1  = 0x0D;
+const uint8_t SITFOOTER1  = 0x0A;
+
+/**
+ * We are receiving
+ */
+const uint8_t SUTHEADER   = 0xAB;
+const uint8_t SUTFOOTER1  = 0x0D;
+const uint8_t SUTFOOTER2  = 0x0A;
+
+
+
+
+typedef struct __attribute__((packed)){
+    uint8_t header;
+    float height;
+    float pressure;
+    float accelx;
+    float accely;
+    float accelz;
+    float gyrox;
+    float gyroy;
+    float gyroz;
+    uint8_t checksum;
+    uint8_t footer1;
+    uint8_t footer2;
+}SUT_DataRx_t;
+
+typedef union{
+    SUT_DataRx_t floatversion;
+    uint8_t charversion[sizeof(SUT_DataRx_t)];
+}SUT_DataUnion_t;
+
+typedef struct __attribute__((packed)){
+    uint8_t header;
+    uint8_t command;
+    uint8_t checksum;
+    uint8_t footer1;
+    uint8_t footer2;
+}SitSut_DataHeader_t;
+
+const SitSut_Dataheader_t SitStart =
+{
+    .header   = 0xAA,
+    .command  = 0x20,
+    .checksum = 0x8C,
+    .footer1  = 0x0D,
+    .footer2  = 0x0A
+};
+
+
+
+const SitSut_Dataheader_t SutStart =
+{
+    .header   = 0xAA,
+    .command  = 0x22,
+    .checksum = 0x8E,
+    .footer1  = 0x0D,
+    .footer2  = 0x0A
+};
+
+typedef struct __attribute__((packed)){
+    uint8_t header;
+    float height;   //meters
+    float pressure; //mBar
+    float accelx;   //m/s^2
+    float accely;   //m/s^2
+    float accelz;   //m/s^2
+    float gyrox;   //m/s^2
+    float gyroy;   //m/s^2
+    float gyroz;   //m/s^2
+    uint8_t checksum;
+    uint8_t footer1;
+    uint8_t footer2;
+}SIT_DataTx_t;
+
+
+
+#endif /* SIT_SUT_SIT_SUT_H_ */

@@ -1,0 +1,42 @@
+/*
+ * RS232.c
+ *
+ *  Created on: Feb 22, 2026
+ *      Author: husey
+ */
+#include "tasks.h"
+const uint8_t commstarted = 0xAA;
+
+const SitSut_DataHeader_t SitSutStop =
+{
+    .header   = commstarted,
+    .command  = 0x24,
+    .checksum = 0x90,
+    .footer1  = 0x0D,
+    .footer2  = 0x0A
+};
+
+
+
+const SitSut_DataHeader_t SutStart =
+{
+   .header   = commstarted,
+   .command  = 0x22,
+   .checksum = 0x8E,
+   .footer1  = 0x0D,
+   .footer2  = 0x0A
+};
+
+
+const SitSut_DataHeader_t SitStart =
+{
+    .header   = commstarted,
+    .command  = 0x20,
+    .checksum = 0x8C,
+    .footer1  = 0x0D,
+    .footer2  = 0x0A
+};
+
+
+
+

@@ -1,0 +1,363 @@
+/*
+ * tasks.c
+ *
+ *  Created on: Feb 22, 2026
+ *      Author: husey
+ */
+
+
+#include "tasks.h"
+
+/**
+ ******************************DEBUG SEGGER VARIABLES*******************************************
+ */
+#ifdef DEBUGGINGWITHSEGGER
+#define DWT_CTRL    (*(volatile uint32_t*)0xE0001000)
+extern void SEGGER_UART_init();
+extern int sprintf(char *str, const char *format, ...);
+#endif
+/***********************************************************************************************/
+
+// ERROR AND STATUS FLAGS
+static volatile uint8_t BME_ERROR_FLAG = 0;
+static volatile uint8_t SIT_Mode       = 0;
+static volatile uint8_t SUT_Mode       = 0;
+
+
+/***********************************************************************************************/
+
+
+
+SemaphoreHandle_t BMEMUTEX;
+
+
+static TaskHandle_t BME_PressureReadTask;
+static void vBME280Task(void *pvParameters);
+
+
+static TaskHandle_t SitSutTask;
+static void vSitSutTask(void *pvParameters);
+UART_HandleTypeDef* SITSUT_UART = &huart1;
+
+BME_Init_Typedef_t BME_Device =
+{
+   .BME_Delay   = vTaskDelay,
+   .coefficient = SIXTEEN,       //Sixteen is the value that datasheet says
+   .hum_osr     = OSR_1,
+   .press_osr   = OSR_16,
+   .tmp_osr     = OSR_2,
+   .spihandler  = &hspi2,
+};
+
+
+/**
+ * System Global Variables
+ */
+volatile float lastUpdatedHeight = 0;
+volatile float lastUpdatedAccelx = 0;
+volatile float lastUpdatedAccely = 0;
+volatile float lastUpdatedAccelz = 0;
+volatile float lastUpdatedGyrox  = 0;
+volatile float lastUpdatedGyroy  = 0;
+volatile float lastUpdatedGyroz  = 0;
+volatile float lastUpdatedPressure = 0;
+
+
+QueueHandle_t HeightQueue;
+
+
+void TasksInitScheduler()
+{
+
+
+    BaseType_t status;
+
+    #if DEBUGGINGWITHSEGGER
+    /*
+     * Initialization process of SEGGER
+     */
+    DWT_CTRL |= ( 1 << 0);
+    SEGGER_UART_init(500000);
+    SEGGER_SYSVIEW_Conf();
+    #endif
+
+    /*
+     * Mutex , Queue ,  Task creations
+     */
+    HeightQueue = xQueueCreate(15 , sizeof(float));
+    BMEMUTEX    = xSemaphoreCreateMutex();
+    status = xTaskCreate(vBME280Task,
+                "BME Pressure Task",
+                PRESSURE_BME_STACK,
+                NULL,
+                PRESSURE_BME_PRIORITY,
+                &BME_PressureReadTask);
+    configASSERT(status);
+
+    status = xTaskCreate(vSitSutTask,
+                "Sit-Sut Task",
+                SITSUT_STACK,
+                NULL,
+                SITSUT_PRIORITY,
+                &SitSutTask);
+
+
+
+    vTaskStartScheduler();
+}
+/**
+ *
+ *
+ * @param pvParameters
+ *
+ *  vBME280Task
+ *
+ */
+
+static void vBME280Task(void *pvParameters){
+
+      errorflag:
+      BMEStatus_Typedef_t status = InitBME_SPI(&BME_Device);
+
+      if(status != BME_SPI_OK){
+        #ifdef DEBUGGINGWITHSEGGER
+        SEGGER_SYSVIEW_Error("BME SPI ERROR");
+        #endif
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        goto errorflag;
+      }
+
+      BME_Data_t localBMEData;
+      float localHeight;
+      char msg[50];
+      for(;;)
+      {
+
+          if(BME_ERROR_FLAG) goto errorflag;
+          localBMEData = BME_DataRead(&BME_Device);
+          localHeight  = PressureToHeight(localBMEData.pressure);
+#ifdef  DEBUGGINGWITHSEGGER
+          int32_t scaledValue  = (uint32_t)(localHeight * 1000);
+          int32_t whole        = scaledValue/100;
+          int32_t fraction     = scaledValue%100;
+
+          if(fraction < 0) fraction *= (-1);
+          sprintf(msg , "Height:%ld.%02ld" , whole , fraction);
+          SEGGER_SYSVIEW_Print(msg);
+#endif
+          if(xSemaphoreTake(BMEMUTEX , portMAX_DELAY) == pdTRUE)
+          {
+            lastUpdatedHeight = localHeight;
+            xSemaphoreGive(BMEMUTEX);
+          }
+
+          xQueueSend(HeightQueue , &localHeight , pdMS_TO_TICKS(10));
+          ulTaskNotifyTake(pdTRUE , portMAX_DELAY);
+
+      }
+}
+
+static void vSitSutTask(void *pvParameters)
+{
+  uint8_t sum = 0;
+  SitSut_DataHeader_t starttop;
+  SIT_DataUnion_t localSit;
+  SUT_DataUnion_t localSut;
+  uint32_t receivedSize = 0;
+   for(;;)
+   {
+     if(!SIT_Mode && !SUT_Mode){
+         HAL_UARTEx_ReceiveToIdle_DMA(SITSUT_UART , (uint8_t *)&starttop , STARTSTOPSIZE);
+         if(xTaskNotifyWait(0 , 0 , &receivedSize , portMAX_DELAY) == pdPASS){
+           if(receivedSize == STARTSTOPSIZE){
+             short SitSutflag =  compareStartStop(&starttop);
+             if(SitSutflag == SITACTIVECODE){
+               portENTER_CRITICAL();
+               SIT_Mode = 1;
+               portEXIT_CRITICAL();
+
+               #ifdef DEBUGGINGWITHSEGGER
+                 SEGGER_SYSVIEW_Print("SIT Mode activated");
+               #endif
+             }
+             if(SitSutflag == SUTACTIVECODE) {
+               portENTER_CRITICAL();
+               SUT_Mode = 1;
+               portEXIT_CRITICAL();
+
+               #ifdef DEBUGGINGWITHSEGGER
+                 SEGGER_SYSVIEW_Print("SUT Mode activated");
+               #endif
+             }
+           }
+         }
+     }
+
+     else if(SIT_Mode){
+           localSit.floatversion.header    = sitheader;
+           localSit.floatversion.footer1   = sitfooter1;
+           localSit.floatversion.footer2   = sitfooter2;
+           localSit.floatversion.accelx    = lastUpdatedAccelx;
+           localSit.floatversion.accely    = lastUpdatedAccely;
+           localSit.floatversion.accelz    = lastUpdatedAccelz;
+           localSit.floatversion.gyrox     = lastUpdatedGyrox;
+           localSit.floatversion.gyroy     = lastUpdatedGyroy;
+           localSit.floatversion.gyroz     = lastUpdatedGyroz;
+           localSit.floatversion.pressure  = lastUpdatedPressure;
+           localSit.floatversion.height    = lastUpdatedHeight;
+           sum = 0;
+           uint8_t stopchecker = 0;
+           for(int i = offsetof(SIT_DataTx_t , height) ; i < offsetof(SIT_DataTx_t , checksum); i++){
+             sum += (uint8_t)localSit.charversion[i];
+           }
+           localSit.floatversion.checksum  = (uint8_t)(sum & (0x7F));
+           HAL_UART_Transmit_DMA(SITSUT_UART, (uint8_t *)(localSit.charversion) , sizeof(SIT_DataUnion_t));
+           HAL_UARTEx_ReceiveToIdle_DMA(SITSUT_UART, &stopchecker, );
+      }
+
+     else if(SUT_Mode){
+        HAL_UARTEx_ReceiveToIdle_DMA(SITSUT_UART, (uint8_t *)&localSut.charversion, sizeof(SUT_DataRx_t));
+        /**
+         * #ToDo the sensor data reading tasks must be suspended
+         * vTaskSuspen(IMU ) , Pressure sensor
+         */
+        if(xTaskNotifyWait(0 , 0 , &receivedSize , portMAX_DELAY) == pdPASS)
+        {
+           if(receivedSize == sizeof(SUT_DataRx_t))
+           {
+             sum = 0;
+             for(int i = offsetof(SUT_DataRx_t , height) ; i < offsetof(SUT_DataRx_t , checksum); i++){
+               sum += (uint8_t)localSut.charversion[i];
+             }
+             sum &= (0x7F);
+             if(sum == localSut.floatversion.checksum){
+               portENTER_CRITICAL();
+               lastUpdatedAccelx   = localSut.floatversion.accelx;
+               lastUpdatedAccely   = localSut.floatversion.accely;
+               lastUpdatedAccelz   = localSut.floatversion.accelz;
+               lastUpdatedGyrox    = localSut.floatversion.gyrox;
+               lastUpdatedGyroy    = localSut.floatversion.gyroy;
+               lastUpdatedGyroz    = localSut.floatversion.gyroz;
+               lastUpdatedPressure = localSut.floatversion.pressure;
+               lastUpdatedHeight   = PressureToHeight(lastUpdatedPressure);
+               #ifdef DEBUGGINGWITHSEGGER
+               SEGGER_SYSVIEW_Print("Data has taken from SUT");
+               #endif
+               portEXIT_CRITICAL();
+             }else{
+               #ifdef DEBUGGINGWITHSEGGER
+               SEGGER_SYSVIEW_Print("Cheksums are not suitable");
+               #endif
+             }
+           }
+           else if(receivedSize == sizeof(SitSutStop))
+           {
+             SitSut_DataHeader_t tobecheckedtostop;
+             tobecheckedtostop.header     = localSut.charversion[0];
+             tobecheckedtostop.command    = localSut.charversion[1];
+             tobecheckedtostop.checksum   = localSut.charversion[2];
+             tobecheckedtostop.footer1    = localSut.charversion[3];
+             tobecheckedtostop.footer2    = localSut.charversion[4];
+
+             if(compareStartStop(&tobecheckedtostop) == STOPSITSUT)
+             {
+                /**
+                 * ToDo
+                 * The sensor reading tasks must continue from here.
+                 */
+                portENTER_CRITICAL();
+                SUT_Mode = 0;
+                portEXIT_CRITICAL();
+             }
+           }
+        }
+     }
+     else{
+       vTaskDelay(100);
+     }
+   }
+   }
+
+
+
+
+
+
+
+
+
+/**
+ *  BME DMA CallBack functions to update variables
+ */
+
+void BME_DMA_Tx_CallBack(void) {
+    HAL_GPIO_WritePin(CSPORT, CSPIN, GPIO_PIN_SET);
+}
+
+void BME_DMA_Rx_CallBack(void) {
+    HAL_GPIO_WritePin(CSPORT, CSPIN, GPIO_PIN_SET);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xTaskNotifyFromISR(BME_PressureReadTask, 0, eNoAction, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+void BME_DMA_ErrorCallBack(void) {
+    HAL_GPIO_WritePin(CSPORT, CSPIN, GPIO_PIN_SET);
+#ifdef  DEBUGGINGWITHSEGGER
+    SEGGER_SYSVIEW_Error("BME Dma Error!!!");
+#endif
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    BME_ERROR_FLAG = 1;
+    xTaskNotifyFromISR(BME_PressureReadTask, 0, eNoAction, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+/**
+ * Sit Sut DMA task callbacks
+ */
+
+void SITSUT_DMA_Rx_CallBack(uint32_t size){
+#ifdef DEBUGGINGWITHSEGGER
+    SEGGER_SYSVIEW_Print("SIT SUT Message received");
+#endif
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xTaskNotifyFromISR(SitSutTask , size , eNoAction , &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+
+void SITSUT_DMA_Tx_CallBack(){
+#ifdef DEBUGGINGWITHSEGGER
+  SEGGER_SYSVIEW_Print("SIT Message sent");
+#endif
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xTaskNotifyFromISR(SitSutTask , 0 , eNoAction , &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+
+void SITSUT_DMA_ErrorCallBack(){
+#ifdef DEBUGGINGWITHSEGGER
+  SEGGER_SYSVIEW_Error("Error happened at the Sit Sut DMA task");
+#endif
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

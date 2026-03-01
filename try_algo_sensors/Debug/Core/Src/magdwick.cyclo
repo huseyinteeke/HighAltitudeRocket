@@ -1,0 +1,2 @@
+../Core/Src/magdwick.c:17:6:MadgwichAHRSUpdateIMU	4
+../Core/Src/magdwick.c:95:6:QuaternionToEuler	1

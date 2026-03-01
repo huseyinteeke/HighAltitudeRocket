@@ -1,0 +1,87 @@
+#include "FreeRTOS.h"
+#include "task.h"
+#include "SEGGER.h"
+#include "semphr.h"
+#include "main.h"
+#include "BME280.h"
+#include "../algorithms_drivers/SIT_SUT/SIT_SUT.h"
+
+
+extern SPI_HandleTypeDef hspi2;
+
+
+
+#define DEBUGGINGWITHSEGGER      1
+
+/*********************************************************************************/
+/**
+ * Pressure sensor parameters
+ */
+
+#define PRESSURE_BME_STACK        512
+#define PRESSURE_BME_PRIORITY     tskIDLE_PRIORITY + 2
+/*********************************************************************************/
+
+
+/*********************************************************************************/
+
+/**
+ * SIT SUT Parameters
+ */
+#define SITSUT_STACK              512
+#define SITSUT_PRIORITY           tskIDLE_PRIORITY + 2
+#define STARTSTOPSIZE             5
+extern UART_HandleTypeDef huart1;
+extern UART_HandleTypeDef* SITSUT_UART;
+
+/**
+ * We are sending
+ */
+#define SITHEADER   = 0xAB;
+#define SITFOOTER1  = 0x0D;
+#define SITFOOTER2  = 0x0A;
+/*********************************************************************************/
+
+/**
+ * STATE MACHINE PARAMETERS
+ */
+
+/**
+ *
+ * Flight status DS
+ */
+typedef enum{
+   IDLE             = 0x2, //Idle and thrust status will be controlled to not detect apogee while not flying
+   THRUST           = 0x1,/**< THRUST */
+   BURNOUT          = 0x0,/**< BURNOUT */
+   FIRSTPARACHUTE   = 0x3,/**< FIRSTPARACHUTE */
+   SECONDPARACHUTE  = 0x4 /**< SECONDPARACHUTE */
+}Flight_Status_t;
+
+
+#define STATEMACHINESTACK        256
+#define STATEMACHINEPRIORITY     (tskIDLE_PRIORITY + 1)
+/********************************************************************************/
+
+
+
+
+
+
+
+
+void TasksInitScheduler();
+
+
+
+/*
+ * DMA CallBacks for tasks
+ */
+void BME_DMA_Rx_CallBack();
+void BME_DMA_Tx_CallBack();
+void BME_DMA_ErrorCallBack();
+
+void SITSUT_DMA_Rx_CallBack(uint32_t size);
+void SITSUT_DMA_Tx_CallBack();
+void SITSUT_DMA_ErrorCallBack();
+

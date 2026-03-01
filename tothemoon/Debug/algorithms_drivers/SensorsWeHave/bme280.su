@@ -1,0 +1,5 @@
+../algorithms_drivers/SensorsWeHave/bme280.c:70:35:BME_WriteReg	24	static
+../algorithms_drivers/SensorsWeHave/bme280.c:84:35:BME_ReadReg	32	static
+../algorithms_drivers/SensorsWeHave/bme280.c:98:21:InitBME_SPI	24	static
+../algorithms_drivers/SensorsWeHave/bme280.c:115:21:BME_ReadCalibData	48	static
+../algorithms_drivers/SensorsWeHave/bme280.c:149:12:BME_DataRead	408	static
