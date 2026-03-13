@@ -44,7 +44,7 @@ typedef union{
     uint8_t charversion[sizeof(SUT_DataRx_t)];
 }SUT_DataUnion_t;
 
-typedef struct __attribute__((packed)){
+typedef struct {
     uint8_t header;
     uint8_t command;
     uint8_t checksum;
@@ -56,7 +56,7 @@ extern const SitSut_DataHeader_t SitStart;
 extern const SitSut_DataHeader_t SutStart;
 extern const SitSut_DataHeader_t SitSutStop;
 
-typedef struct __attribute__((packed)){
+typedef struct{
     uint8_t header;
     float height;   //meters
     float pressure; //mBar

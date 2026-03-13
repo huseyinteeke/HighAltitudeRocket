@@ -10,6 +10,10 @@
 
 Flight_Status_t flightstatus;
 
+
+
+uint32_t receivedSize = 0;
+uint32_t notifyVal;
 /**
  ******************************DEBUG SEGGER VARIABLES*******************************************
  */
@@ -35,14 +39,14 @@ SemaphoreHandle_t BMEMUTEX;
 
 static TaskHandle_t BME_PressureReadTask;
 static TaskHandle_t SitSutTask;
-static TaskHandle_t StateMachineTask;
+//static TaskHandle_t StateMachineTask;
 
 
 static void vBME280Task(void *pvParameters);
 static void vSitSutTask(void *pvParameters);
-static void vStateMachineTask(void *pvParameters);
+//static void vStateMachineTask(void *pvParameters);
 
-UART_HandleTypeDef* SITSUT_UART = &huart1;
+UART_HandleTypeDef* SITSUT_UART = &huart5;
 
 BME_Init_Typedef_t BME_Device =
 {
@@ -82,7 +86,7 @@ void TasksInitScheduler()
      * Initialization process of SEGGER
      */
     DWT_CTRL |= ( 1 << 0);
-    SEGGER_UART_init(500000);
+    SEGGER_UART_init(250000);
     SEGGER_SYSVIEW_Conf();
     #endif
 
@@ -106,13 +110,13 @@ void TasksInitScheduler()
                 SITSUT_PRIORITY,
                 &SitSutTask);
 
-    status = xTaskCreate(vStateMachineTask ,
+    /*status = xTaskCreate(vStateMachineTask ,
                 "State Machine Task",
                 STATEMACHINESTACK ,
                 NULL,
                 STATEMACHINEPRIORITY ,
                 &StateMachineTask);
-    configASSERT(status);
+    configASSERT(status);*/
     vTaskStartScheduler();
 }
 /**
@@ -125,16 +129,13 @@ void TasksInitScheduler()
  */
 
 static void vBME280Task(void *pvParameters){
-
-      errorflag:
       BMEStatus_Typedef_t status = InitBME_SPI(&BME_Device);
 
       if(status != BME_SPI_OK){
         #ifdef DEBUGGINGWITHSEGGER
         SEGGER_SYSVIEW_Error("BME SPI ERROR");
         #endif
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        goto errorflag;
+        vTaskDelete(NULL);
       }
 
       BME_Data_t localBMEData;
@@ -143,7 +144,6 @@ static void vBME280Task(void *pvParameters){
       for(;;)
       {
 
-          if(BME_ERROR_FLAG) goto errorflag;
           localBMEData = BME_DataRead(&BME_Device);
           localHeight  = PressureToHeight(localBMEData.pressure);
 #ifdef  DEBUGGINGWITHSEGGER
@@ -178,36 +178,46 @@ static void vSitSutTask(void *pvParameters)
   SitSut_DataHeader_t starttop;
   SIT_DataUnion_t localSit;
   SUT_DataUnion_t localSut;
-  uint32_t receivedSize = 0;
    for(;;)
    {
      if(!SIT_Mode && !SUT_Mode){
-         HAL_UARTEx_ReceiveToIdle_DMA(SITSUT_UART , (uint8_t *)&starttop , STARTSTOPSIZE);
-         if(xTaskNotifyWait(0 , 0 , &receivedSize , portMAX_DELAY) == pdPASS){
-           if(receivedSize == STARTSTOPSIZE){
-             short SitSutflag =  compareStartStop(&starttop);
-             if(SitSutflag == SITACTIVECODE){
-               portENTER_CRITICAL();
-               SIT_Mode = 1;
-               portEXIT_CRITICAL();
+       volatile uint32_t tmpreg = 0x00;
+       tmpreg = SITSUT_UART->Instance->SR; // 1. Adım: SR oku
+       tmpreg = SITSUT_UART->Instance->DR; // 2. Adım: DR oku (RXNE ve ORE'yi temizler)
+       (void)tmpreg;
 
-               #ifdef DEBUGGINGWITHSEGGER
-                 SEGGER_SYSVIEW_Print("SIT Mode activated");
-               #endif
-             }
-             if(SitSutflag == SUTACTIVECODE) {
-               portENTER_CRITICAL();
-               SUT_Mode = 1;
-               portEXIT_CRITICAL();
+       __HAL_UART_CLEAR_OREFLAG(SITSUT_UART);
+       __HAL_UART_CLEAR_FEFLAG(SITSUT_UART);
+       __HAL_UART_CLEAR_IDLEFLAG(SITSUT_UART);
+       HAL_UARTEx_ReceiveToIdle_DMA(SITSUT_UART,
+                   (uint8_t *)(&starttop) ,
+                   sizeof(SitSut_DataHeader_t));
+       xTaskNotifyWait(0xFFFFFFFF, 0xFFFFFFFF, &notifyVal, portMAX_DELAY);
+       short SitSutflag =  compareStartStop(&starttop);
+       if(SitSutflag == SITACTIVECODE){
+         portENTER_CRITICAL();
+         SIT_Mode = 1;
+         portEXIT_CRITICAL();
 
-               #ifdef DEBUGGINGWITHSEGGER
-                 SEGGER_SYSVIEW_Print("SUT Mode activated");
-               #endif
-             }
-           }
-         }
+         #ifdef DEBUGGINGWITHSEGGER
+           SEGGER_SYSVIEW_Print("SIT Mode activated");
+         #endif
+       }
+       else if(SitSutflag == SUTACTIVECODE) {
+         portENTER_CRITICAL();
+         SUT_Mode = 1;
+         portEXIT_CRITICAL();
+
+         #ifdef DEBUGGINGWITHSEGGER
+           SEGGER_SYSVIEW_Print("SUT Mode activated");
+         #endif
+       }
+       else{
+         #ifdef DEBUGGINGWITHSEGGER
+           SEGGER_SYSVIEW_PrintfHost("Nothing happened , flag value = %hd" , SitSutflag);
+         #endif
+       }
      }
-
      else if(SIT_Mode){
            localSit.floatversion.header    = sitheader;
            localSit.floatversion.footer1   = sitfooter1;
@@ -240,7 +250,7 @@ static void vSitSutTask(void *pvParameters)
       }
 
      else if(SUT_Mode){
-        HAL_UARTEx_ReceiveToIdle_DMA(SITSUT_UART, (uint8_t *)&localSut.charversion, sizeof(SUT_DataRx_t));
+        HAL_UART_Transmit_DMA(SITSUT_UART, (uint8_t *)&localSut.charversion, sizeof(SUT_DataRx_t));
         /**
          * #ToDo the sensor data reading tasks must be suspended
          * vTaskSuspen(IMU ) , Pressure sensor
@@ -296,9 +306,6 @@ static void vSitSutTask(void *pvParameters)
            }
         }
      }
-     else{
-       vTaskDelay(100);
-     }
    }
    }
 
@@ -308,10 +315,16 @@ static void vSitSutTask(void *pvParameters)
  * @param pvParameters
  * #ToDo
  */
+/*
 static void vStateMachineTask(void *pvParameters){
     for(;;){
+
+      vTaskDelay(1000);
     }
+
 }
+*/
+
 
 
 
@@ -347,12 +360,12 @@ void BME_DMA_ErrorCallBack(void) {
  * Sit Sut DMA task callbacks
  */
 
-void SITSUT_DMA_Rx_CallBack(uint32_t size){
+void SITSUT_DMA_Rx_CallBack(){
 #ifdef DEBUGGINGWITHSEGGER
     SEGGER_SYSVIEW_Print("SIT SUT Message received");
 #endif
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    xTaskNotifyFromISR(SitSutTask , size , eNoAction , &xHigherPriorityTaskWoken);
+  xTaskNotifyFromISR(SitSutTask, 0x01, eSetValueWithOverwrite, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
@@ -361,13 +374,11 @@ void SITSUT_DMA_Tx_CallBack(){
 #ifdef DEBUGGINGWITHSEGGER
   SEGGER_SYSVIEW_Print("SIT Message sent");
 #endif
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    xTaskNotifyFromISR(SitSutTask , 0 , eNoAction , &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 
 void SITSUT_DMA_ErrorCallBack(){
+
 #ifdef DEBUGGINGWITHSEGGER
   SEGGER_SYSVIEW_Error("Error happened at the Sit Sut DMA task");
 #endif

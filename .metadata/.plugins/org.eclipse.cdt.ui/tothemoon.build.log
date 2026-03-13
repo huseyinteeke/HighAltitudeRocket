@@ -1,10 +1,10 @@
-15:10:59 **** Incremental Build of configuration Debug for project tothemoon ****
+20:49:00 **** Incremental Build of configuration Debug for project tothemoon ****
 make -j20 all 
 arm-none-eabi-size  tothemoon.elf 
    text	   data	    bss	    dec	    hex	filename
-  55604	    124	 111604	 167332	  28da4	tothemoon.elf
+  55760	    124	 111476	 167360	  28dc0	tothemoon.elf
 Finished building: default.size.stdout
  
 
-15:10:59 Build Finished. 0 errors, 0 warnings. (took 335ms)
+20:49:00 Build Finished. 0 errors, 0 warnings. (took 241ms)
 

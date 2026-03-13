@@ -31,7 +31,7 @@ extern SPI_HandleTypeDef hspi2;
 #define SITSUT_STACK              512
 #define SITSUT_PRIORITY           tskIDLE_PRIORITY + 2
 #define STARTSTOPSIZE             5
-extern UART_HandleTypeDef huart1;
+extern UART_HandleTypeDef huart5;
 extern UART_HandleTypeDef* SITSUT_UART;
 
 /**
@@ -81,7 +81,7 @@ void BME_DMA_Rx_CallBack();
 void BME_DMA_Tx_CallBack();
 void BME_DMA_ErrorCallBack();
 
-void SITSUT_DMA_Rx_CallBack(uint32_t size);
+void SITSUT_DMA_Rx_CallBack();
 void SITSUT_DMA_Tx_CallBack();
 void SITSUT_DMA_ErrorCallBack();
 
